@@ -1,0 +1,89 @@
+pipeline {
+    agent any
+
+    environment {
+        DOCKER_COMPOSE_VERSION = '2.0'
+    }
+
+    stages {
+        stage('Start Services') {
+            steps {
+                sh './start-all.sh'
+                // Wait for services to be ready
+                sh '''
+                    echo "Waiting for services to start..."
+                    sleep 30
+                '''
+            }
+        }
+
+        stage('Health Checks') {
+            steps {
+                sh '''
+                    # Verify containers are running
+                    docker ps | grep pms
+
+                    # Test API endpoints
+                    curl -f http://localhost:5001/api/booking || exit 1
+                    curl -f http://localhost:5002/api/invoice || exit 1
+                    curl -f http://localhost:5003/api/site || exit 1
+
+                    # Check frontends are accessible
+                    curl -f http://localhost:4200 || exit 1
+                    curl -f http://localhost:4201 || exit 1
+                '''
+            }
+        }
+
+        stage('API Tests') {
+            steps {
+                sh '''
+                    # Test Site API - Create site
+                    curl -X POST http://localhost:5003/api/site \
+                        -H "Content-Type: application/json" \
+                        -d '{"name": "Test Site", "capacity": 100}' \
+                        -f || exit 1
+
+                    # Test Booking API
+                    curl -f http://localhost:5001/api/booking || exit 1
+
+                    # Test Invoice API
+                    curl -f http://localhost:5002/api/invoice || exit 1
+                '''
+            }
+        }
+
+        stage('Kafka Verification') {
+            steps {
+                sh '''
+                    # List Kafka topics
+                    docker exec pms-kafka kafka-topics --list --bootstrap-server localhost:9092
+
+                    # Verify required topics exist
+                    docker exec pms-kafka kafka-topics --list --bootstrap-server localhost:9092 | grep -E "site-created|booking-created|invoice-created"
+                '''
+            }
+        }
+
+        stage('E2E Tests') {
+            // Optional: Add Playwright/Cypress tests for UI
+            steps {
+                echo 'Run E2E tests here (Playwright/Cypress)'
+                // sh 'npx playwright test'
+            }
+        }
+    }
+
+    post {
+        always {
+            sh './stop-all.sh || true'
+        }
+        failure {
+            sh '''
+                echo "=== Docker Logs ==="
+                docker logs pms-sqlserver 2>&1 | tail -50 || true
+                docker logs pms-kafka 2>&1 | tail -50 || true
+            '''
+        }
+    }
+}
