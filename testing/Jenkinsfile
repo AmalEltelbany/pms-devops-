@@ -16,9 +16,9 @@ pipeline {
 
                         # Step 1: Start infrastructure (SQL Server, Kafka, Zookeeper)
                         echo "[1/6] Starting infrastructure services..."
-                        docker compose -f docker-compose.testing.yml up -d zookeeper sqlserver
+                        docker compose -f docker-compose.ci.yml up -d zookeeper sqlserver
                         sleep 5
-                        docker compose -f docker-compose.testing.yml up -d kafka
+                        docker compose -f docker-compose.ci.yml up -d kafka
 
                         # Step 2: Wait for Kafka to be ready
                         echo "[2/6] Waiting for Kafka to be ready..."
@@ -60,7 +60,7 @@ pipeline {
 
                         # Step 5: Start all services
                         echo "[5/6] Starting backend and frontend services..."
-                        docker compose -f docker-compose.testing.yml up -d
+                        docker compose -f docker-compose.ci.yml up -d
                         echo "Waiting 15 seconds for services to initialize..."
                         sleep 15
 
@@ -68,7 +68,7 @@ pipeline {
                         echo "[6/6] Starting Kafka UI..."
                         docker rm -f kafka-ui 2>/dev/null || true
                         docker run -d --name kafka-ui \
-                          --network testing_pms-network \
+                          --network pms-network \
                           -p 8085:8080 \
                           -e KAFKA_CLUSTERS_0_NAME=pms-kafka \
                           -e KAFKA_CLUSTERS_0_BOOTSTRAPSERVERS=kafka:9092 \
@@ -164,7 +164,7 @@ pipeline {
                     echo "  Stopping All Services"
                     echo "==========================================="
                     docker rm -f kafka-ui 2>/dev/null || true
-                    docker compose -f docker-compose.testing.yml down || true
+                    docker compose -f docker-compose.ci.yml down || true
                 '''
             }
         }
