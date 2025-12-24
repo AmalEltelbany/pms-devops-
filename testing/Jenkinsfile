@@ -8,7 +8,9 @@ pipeline {
     stages {
         stage('Start Services') {
             steps {
-                sh './start-all.sh'
+                dir('testing') {
+                    sh 'chmod +x start-all.sh && ./start-all.sh'
+                }
                 // Wait for services to be ready
                 sh '''
                     echo "Waiting for services to start..."
@@ -76,7 +78,9 @@ pipeline {
 
     post {
         always {
-            sh './stop-all.sh || true'
+            dir('testing') {
+                sh 'chmod +x stop-all.sh && ./stop-all.sh || true'
+            }
         }
         failure {
             sh '''
