@@ -159,8 +159,25 @@ services:
       - "5000:5000/tcp"
       - "5000:5000/udp"
       - "9600:9600"
-    volumes:
-      - ./logstash.conf:/usr/share/logstash/pipeline/logstash.conf:ro
+    environment:
+      - XPACK_MONITORING_ENABLED=false
+      - PIPELINE_WORKERS=1
+    command: >
+      logstash -e '
+        input {
+          tcp {
+            port => 5000
+            codec => json_lines
+          }
+        }
+        output {
+          elasticsearch {
+            hosts => ["elasticsearch:9200"]
+            index => "pms-logs-%{+YYYY.MM.dd}"
+          }
+          stdout { codec => rubydebug }
+        }
+      '
     networks:
       - pms-network
     restart: unless-stopped
