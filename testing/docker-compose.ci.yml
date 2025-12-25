@@ -184,7 +184,7 @@ services:
   # Frontend Applications (using default nginx config from images)
 
   admin-frontend:
-    image: amaleltelabany/pms-admin-frontend:latest
+    image: salmawaleedd/pms-admin-frontend:latest
     container_name: pms-admin-frontend
     ports:
       - "4200:80"
@@ -195,10 +195,10 @@ services:
     restart: unless-stopped
 
   parker-frontend:
-    image: amaleltelabany/pms-parker-frontend:1
+    image: salmawaleedd/pms-parker-frontend:latest
     container_name: pms-parker-frontend
     ports:
-      - "4201:80"
+      - "4201:3000"
     depends_on:
       - booking-service
       - site-service

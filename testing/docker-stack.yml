@@ -125,7 +125,7 @@ services:
   # Frontend Applications
 
   admin-frontend:
-    image: amaleltelabany/pms-admin-frontend:latest
+    image: salmawaleedd/pms-admin-frontend:latest
     ports:
       - "4200:80"
     networks:
@@ -136,13 +136,65 @@ services:
         condition: on-failure
 
   parker-frontend:
-    image: amaleltelabany/pms-parker-frontend:1
+    image: salmawaleedd/pms-parker-frontend:latest
     ports:
-      - "4201:80"
+      - "4201:3000"
     networks:
       - pms-network
     deploy:
       replicas: 2
+      restart_policy:
+        condition: on-failure
+
+  # ELK Stack - Logging and Monitoring
+
+  elasticsearch:
+    image: docker.elastic.co/elasticsearch/elasticsearch:8.11.0
+    ports:
+      - "9200:9200"
+      - "9300:9300"
+    environment:
+      - discovery.type=single-node
+      - xpack.security.enabled=false
+      - "ES_JAVA_OPTS=-Xms512m -Xmx512m"
+    networks:
+      - pms-network
+    volumes:
+      - elasticsearch_data:/usr/share/elasticsearch/data
+    deploy:
+      replicas: 1
+      restart_policy:
+        condition: on-failure
+      placement:
+        constraints:
+          - node.role == manager
+
+  logstash:
+    image: docker.elastic.co/logstash/logstash:8.11.0
+    ports:
+      - "5000:5000"
+      - "9600:9600"
+    environment:
+      - XPACK_MONITORING_ENABLED=false
+      - PIPELINE_WORKERS=1
+    command: logstash -e 'input { tcp { port => 5000 codec => json_lines } } output { elasticsearch { hosts => ["elasticsearch:9200"] index => "pms-logs-%{+YYYY.MM.dd}" } stdout { codec => rubydebug } }'
+    networks:
+      - pms-network
+    deploy:
+      replicas: 1
+      restart_policy:
+        condition: on-failure
+
+  kibana:
+    image: docker.elastic.co/kibana/kibana:8.11.0
+    ports:
+      - "5601:5601"
+    environment:
+      - ELASTICSEARCH_HOSTS=http://elasticsearch:9200
+    networks:
+      - pms-network
+    deploy:
+      replicas: 1
       restart_policy:
         condition: on-failure
 
@@ -184,3 +236,4 @@ networks:
 
 volumes:
   sql_data:
+  elasticsearch_data:
