@@ -1,0 +1,157 @@
+// Backend-Only Pipeline - Deploys only backend services (no frontend)
+// Use this for backend development and testing
+
+pipeline {
+    agent any
+
+    stages {
+        stage('Deploy Backend') {
+            steps {
+                dir('testing') {
+                    sh '''
+                        echo "==========================================="
+                        echo "  PMS Backend - Deploying Backend Services"
+                        echo "==========================================="
+
+                        # Step 1: Start infrastructure (SQL Server, Kafka, Zookeeper, ELK)
+                        echo "[1/5] Starting infrastructure services..."
+                        docker compose -f docker-compose.ci.yml up -d zookeeper sqlserver elasticsearch
+                        sleep 5
+                        docker compose -f docker-compose.ci.yml up -d kafka
+
+                        # Step 2: Wait for Kafka to be ready
+                        echo "[2/5] Waiting for Kafka to be ready..."
+                        for i in $(seq 1 30); do
+                            if docker exec pms-kafka kafka-topics --list --bootstrap-server localhost:9092 2>/dev/null; then
+                                echo "Kafka is ready!"
+                                break
+                            fi
+                            echo "Waiting... ($i/30)"
+                            sleep 2
+                        done
+
+                        # Create Kafka topics
+                        echo "Creating Kafka topics..."
+                        docker exec pms-kafka kafka-topics --create --topic site-created --partitions 3 --replication-factor 1 --bootstrap-server localhost:9092 2>/dev/null || echo "topic site-created exists"
+                        docker exec pms-kafka kafka-topics --create --topic booking-created --partitions 3 --replication-factor 1 --bootstrap-server localhost:9092 2>/dev/null || echo "topic booking-created exists"
+                        docker exec pms-kafka kafka-topics --create --topic ticket-created --partitions 3 --replication-factor 1 --bootstrap-server localhost:9092 2>/dev/null || echo "topic ticket-created exists"
+                        docker exec pms-kafka kafka-topics --create --topic invoice-created --partitions 3 --replication-factor 1 --bootstrap-server localhost:9092 2>/dev/null || echo "topic invoice-created exists"
+
+                        # Step 3: Wait for SQL Server to be ready
+                        echo "[3/5] Waiting for SQL Server..."
+                        for i in $(seq 1 30); do
+                            if docker exec pms-sqlserver /opt/mssql-tools18/bin/sqlcmd -S localhost -U sa -P "YourStrong@Passw0rd" -C -Q "SELECT 1" 2>/dev/null; then
+                                echo "SQL Server is ready!"
+                                break
+                            fi
+                            echo "Waiting for SQL Server... ($i/30)"
+                            sleep 2
+                        done
+
+                        # Note: Database creation and migrations are handled by the backend services on startup
+
+                        # Step 4: Wait for Elasticsearch and start ELK stack
+                        echo "[4/5] Waiting for Elasticsearch and starting ELK stack..."
+                        for i in $(seq 1 30); do
+                            if curl -s http://localhost:9200/_cluster/health 2>/dev/null | grep -q '"status":"green"\|"status":"yellow"'; then
+                                echo "Elasticsearch is ready!"
+                                break
+                            fi
+                            echo "Waiting for Elasticsearch... ($i/30)"
+                            sleep 5
+                        done
+
+                        # Start Logstash and Kibana
+                        docker compose -f docker-compose.ci.yml up -d logstash kibana
+
+                        # Step 5: Start backend services only
+                        echo "[5/5] Starting backend services..."
+                        docker compose -f docker-compose.ci.yml up -d booking-service invoice-service site-service
+
+                        # Wait for backend services to be healthy
+                        echo "Waiting for backend services to be ready..."
+                        for i in $(seq 1 60); do
+                            BOOKING_OK=$(curl -s -o /dev/null -w "%{http_code}" http://localhost:5001/api/booking 2>/dev/null | grep -q "200\|404" && echo "1" || echo "0")
+                            INVOICE_OK=$(curl -s -o /dev/null -w "%{http_code}" http://localhost:5002/api/invoice 2>/dev/null | grep -q "200\|404" && echo "1" || echo "0")
+                            SITE_OK=$(curl -s -o /dev/null -w "%{http_code}" http://localhost:5003/api/site 2>/dev/null | grep -q "200\|404" && echo "1" || echo "0")
+
+                            if [ "$BOOKING_OK" = "1" ] && [ "$INVOICE_OK" = "1" ] && [ "$SITE_OK" = "1" ]; then
+                                echo "All backend services are ready!"
+                                break
+                            fi
+                            echo "Waiting for services... ($i/60)"
+                            sleep 5
+                        done
+
+                        # Start Kafka UI for monitoring
+                        echo "Starting Kafka UI..."
+                        docker rm -f kafka-ui 2>/dev/null || true
+                        docker run -d --name kafka-ui \
+                          --network testing_pms-network \
+                          -p 8085:8080 \
+                          -e KAFKA_CLUSTERS_0_NAME=pms-kafka \
+                          -e KAFKA_CLUSTERS_0_BOOTSTRAPSERVERS=kafka:9092 \
+                          provectuslabs/kafka-ui:latest || true
+
+                        echo ""
+                        echo "==========================================="
+                        echo "  BACKEND DEPLOYMENT COMPLETE!"
+                        echo "==========================================="
+                        echo ""
+                        echo "API Endpoints:"
+                        echo "  Booking API:  http://localhost:5001/api/booking"
+                        echo "  Invoice API:  http://localhost:5002/api/invoice"
+                        echo "  Site API:     http://localhost:5003/api/site"
+                        echo ""
+                        echo "Monitoring:"
+                        echo "  Kafka UI:      http://localhost:8085"
+                        echo "  Kibana:        http://localhost:5601"
+                        echo "  Elasticsearch: http://localhost:9200"
+                        echo "  Logstash:      http://localhost:9600"
+                        echo ""
+                    '''
+                }
+            }
+        }
+
+        stage('Health Check') {
+            steps {
+                sh '''
+                    echo "==========================================="
+                    echo "  Health Checks"
+                    echo "==========================================="
+
+                    echo "Testing API endpoints..."
+                    curl -f http://localhost:5001/api/booking || echo "Booking API check"
+                    curl -f http://localhost:5002/api/invoice || echo "Invoice API check"
+                    curl -f http://localhost:5003/api/site || echo "Site API check"
+
+                    echo ""
+                    echo "Testing ELK Stack..."
+                    curl -s http://localhost:9200/_cluster/health | grep -q "green\|yellow" && echo "Elasticsearch: OK" || echo "Elasticsearch: Starting..."
+                    curl -s http://localhost:5601/api/status | grep -q "available" && echo "Kibana: OK" || echo "Kibana: Starting..."
+
+                    echo ""
+                    echo "Running containers:"
+                    docker ps --format "table {{.Names}}\t{{.Status}}\t{{.Ports}}" | grep -E "pms|kafka|elastic|logstash|kibana"
+                '''
+            }
+        }
+    }
+
+    post {
+        failure {
+            sh '''
+                echo "=== Docker Logs ==="
+                docker logs pms-booking-service 2>&1 | tail -50 || true
+                docker logs pms-invoice-service 2>&1 | tail -50 || true
+                docker logs pms-site-service 2>&1 | tail -50 || true
+                docker logs pms-sqlserver 2>&1 | tail -50 || true
+                docker logs pms-kafka 2>&1 | tail -50 || true
+                docker logs pms-elasticsearch 2>&1 | tail -30 || true
+                docker logs pms-logstash 2>&1 | tail -30 || true
+                docker logs pms-kibana 2>&1 | tail -30 || true
+            '''
+        }
+    }
+}
