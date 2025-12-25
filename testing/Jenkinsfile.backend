@@ -13,6 +13,11 @@ pipeline {
                         echo "  PMS Backend - Deploying Backend Services"
                         echo "==========================================="
 
+                        # Cleanup any previous failed containers
+                        echo "Cleaning up previous containers..."
+                        docker compose -f docker-compose.ci.yml down 2>/dev/null || true
+                        docker rm -f kafka-ui pms-logstash 2>/dev/null || true
+
                         # Step 1: Start infrastructure (SQL Server, Kafka, Zookeeper, ELK)
                         echo "[1/5] Starting infrastructure services..."
                         docker compose -f docker-compose.ci.yml up -d zookeeper sqlserver elasticsearch
@@ -61,8 +66,10 @@ pipeline {
                             sleep 5
                         done
 
-                        # Start Logstash and Kibana
-                        docker compose -f docker-compose.ci.yml up -d logstash kibana
+                        # Start Logstash and Kibana (optional - don't fail if ELK has issues)
+                        echo "Starting Logstash and Kibana..."
+                        docker compose -f docker-compose.ci.yml up -d logstash kibana || echo "Warning: ELK stack may have issues, continuing..."
+                        sleep 10
 
                         # Step 5: Start backend services only
                         echo "[5/5] Starting backend services..."
