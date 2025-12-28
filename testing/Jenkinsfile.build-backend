@@ -1,0 +1,122 @@
+// Backend Services Build Pipeline
+// Builds and pushes backend Docker images to Docker Hub
+
+pipeline {
+    agent any
+
+    environment {
+        DOCKER_HUB_USER = 'amaleltelabany'
+        BACKEND_REPO = 'https://github.com/GS-PMS/pms-backend.git'
+    }
+
+    stages {
+        stage('Checkout Backend Repo') {
+            steps {
+                // Clone the private backend repository
+                // Make sure to configure 'github-credentials' in Jenkins
+                git branch: 'main',
+                    credentialsId: 'github-credentials',
+                    url: "${BACKEND_REPO}"
+            }
+        }
+
+        stage('Show Project Structure') {
+            steps {
+                sh '''
+                    echo "=========================================="
+                    echo "  Project Structure"
+                    echo "=========================================="
+                    ls -la
+                    echo ""
+                    echo "Looking for Dockerfiles..."
+                    find . -name "Dockerfile" -type f 2>/dev/null || echo "No Dockerfiles found"
+                '''
+            }
+        }
+
+        stage('Build Backend Images') {
+            parallel {
+                stage('Build Booking Service') {
+                    steps {
+                        sh '''
+                            echo "Building Booking Service..."
+                            docker build -f Booking.API/Dockerfile -t ${DOCKER_HUB_USER}/pms-booking-service:${BUILD_NUMBER} .
+                            docker tag ${DOCKER_HUB_USER}/pms-booking-service:${BUILD_NUMBER} ${DOCKER_HUB_USER}/pms-booking-service:latest
+                        '''
+                    }
+                }
+                stage('Build Invoice Service') {
+                    steps {
+                        sh '''
+                            echo "Building Invoice Service..."
+                            docker build -f Invoice.API/Dockerfile -t ${DOCKER_HUB_USER}/pms-invoice-service:${BUILD_NUMBER} .
+                            docker tag ${DOCKER_HUB_USER}/pms-invoice-service:${BUILD_NUMBER} ${DOCKER_HUB_USER}/pms-invoice-service:latest
+                        '''
+                    }
+                }
+                stage('Build Site Service') {
+                    steps {
+                        sh '''
+                            echo "Building Site Service..."
+                            docker build -f Site.API/Dockerfile -t ${DOCKER_HUB_USER}/pms-site-service:${BUILD_NUMBER} .
+                            docker tag ${DOCKER_HUB_USER}/pms-site-service:${BUILD_NUMBER} ${DOCKER_HUB_USER}/pms-site-service:latest
+                        '''
+                    }
+                }
+            }
+        }
+
+        stage('Login to Docker Hub') {
+            steps {
+                withCredentials([usernamePassword(credentialsId: 'dockerhub-credentials', usernameVariable: 'DOCKER_USER', passwordVariable: 'DOCKER_PASS')]) {
+                    sh '''
+                        echo "Logging in to Docker Hub..."
+                        echo $DOCKER_PASS | docker login -u $DOCKER_USER --password-stdin
+                    '''
+                }
+            }
+        }
+
+        stage('Push to Docker Hub') {
+            steps {
+                sh '''
+                    echo "Pushing Booking Service..."
+                    docker push ${DOCKER_HUB_USER}/pms-booking-service:latest
+                    docker push ${DOCKER_HUB_USER}/pms-booking-service:${BUILD_NUMBER}
+
+                    echo "Pushing Invoice Service..."
+                    docker push ${DOCKER_HUB_USER}/pms-invoice-service:latest
+                    docker push ${DOCKER_HUB_USER}/pms-invoice-service:${BUILD_NUMBER}
+
+                    echo "Pushing Site Service..."
+                    docker push ${DOCKER_HUB_USER}/pms-site-service:latest
+                    docker push ${DOCKER_HUB_USER}/pms-site-service:${BUILD_NUMBER}
+                '''
+            }
+        }
+    }
+
+    post {
+        success {
+            sh '''
+                echo ""
+                echo "=========================================="
+                echo "  Backend Build Successful!"
+                echo "=========================================="
+                echo ""
+                echo "Images pushed to Docker Hub:"
+                echo "  - ${DOCKER_HUB_USER}/pms-booking-service:latest"
+                echo "  - ${DOCKER_HUB_USER}/pms-invoice-service:latest"
+                echo "  - ${DOCKER_HUB_USER}/pms-site-service:latest"
+                echo ""
+                echo "Build number: ${BUILD_NUMBER}"
+            '''
+        }
+        failure {
+            echo "Backend build failed! Check the logs above."
+        }
+        always {
+            sh 'docker logout || true'
+        }
+    }
+}

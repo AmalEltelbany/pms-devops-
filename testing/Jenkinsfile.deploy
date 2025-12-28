@@ -1,126 +1,196 @@
-// Deploy Pipeline - Starts services and keeps them running
-// Use this when you want to access the services after deployment
+// PMS Deployment Pipeline
+// Triggered after backend build pipeline completes
+// Pulls images from Docker Hub and deploys to Docker Swarm
 
 pipeline {
     agent any
 
+    environment {
+        STACK_NAME = 'pms'
+        DOCKER_HUB_BACKEND = 'amaleltelabany'
+        DOCKER_HUB_FRONTEND = 'salmawaleedd'
+        DEVOPS_REPO = 'https://github.com/your-user/pms-devops.git'  // Update this
+    }
+
     stages {
-        stage('Deploy Services') {
+        stage('Checkout DevOps Repo') {
+            steps {
+                // Get the docker-stack.yml file
+                git branch: 'main',
+                    url: "${DEVOPS_REPO}"
+                    // Add credentialsId if private: credentialsId: 'github-credentials'
+            }
+        }
+
+        stage('Pull All Images') {
+            parallel {
+                stage('Pull Backend Images') {
+                    steps {
+                        sh '''
+                            echo "=========================================="
+                            echo "  Pulling Backend Images (amaleltelabany)"
+                            echo "=========================================="
+                            docker pull ${DOCKER_HUB_BACKEND}/pms-booking-service:latest
+                            docker pull ${DOCKER_HUB_BACKEND}/pms-invoice-service:latest
+                            docker pull ${DOCKER_HUB_BACKEND}/pms-site-service:latest
+                            echo "Backend images pulled!"
+                        '''
+                    }
+                }
+                stage('Pull Frontend Images') {
+                    steps {
+                        sh '''
+                            echo "=========================================="
+                            echo "  Pulling Frontend Images (salmawaleedd)"
+                            echo "=========================================="
+                            docker pull ${DOCKER_HUB_FRONTEND}/pms-admin-frontend:latest
+                            docker pull ${DOCKER_HUB_FRONTEND}/pms-parker-frontend:latest
+                            echo "Frontend images pulled!"
+                        '''
+                    }
+                }
+            }
+        }
+
+        stage('Clean Previous Stack') {
+            steps {
+                sh '''
+                    if docker stack ls | grep -q "${STACK_NAME}"; then
+                        echo "Removing existing stack..."
+                        docker stack rm ${STACK_NAME}
+                        sleep 20
+                    fi
+                '''
+            }
+        }
+
+        stage('Deploy to Swarm') {
             steps {
                 dir('testing') {
                     sh '''
-                        echo "==========================================="
-                        echo "  PMS Backend - Deploying All Services"
-                        echo "==========================================="
-
-                        # Step 1: Start infrastructure (SQL Server, Kafka, Zookeeper)
-                        echo "[1/6] Starting infrastructure services..."
-                        docker compose -f docker-compose.ci.yml up -d zookeeper sqlserver
-                        sleep 5
-                        docker compose -f docker-compose.ci.yml up -d kafka
-
-                        # Step 2: Wait for Kafka to be ready
-                        echo "[2/6] Waiting for Kafka to be ready..."
-                        for i in $(seq 1 30); do
-                            if docker exec pms-kafka kafka-topics --list --bootstrap-server localhost:9092 2>/dev/null; then
-                                echo "Kafka is ready!"
-                                break
-                            fi
-                            echo "Waiting... ($i/30)"
-                            sleep 2
-                        done
-
-                        # Step 3: Create Kafka topics
-                        echo "[3/6] Creating Kafka topics..."
-                        docker exec pms-kafka kafka-topics --create --topic site-created --partitions 3 --replication-factor 1 --bootstrap-server localhost:9092 2>/dev/null || echo "topic site-created exists"
-                        docker exec pms-kafka kafka-topics --create --topic booking-created --partitions 3 --replication-factor 1 --bootstrap-server localhost:9092 2>/dev/null || echo "topic booking-created exists"
-                        docker exec pms-kafka kafka-topics --create --topic ticket-created --partitions 3 --replication-factor 1 --bootstrap-server localhost:9092 2>/dev/null || echo "topic ticket-created exists"
-                        docker exec pms-kafka kafka-topics --create --topic invoice-created --partitions 3 --replication-factor 1 --bootstrap-server localhost:9092 2>/dev/null || echo "topic invoice-created exists"
-
-                        # Step 4: Wait for SQL Server to be ready
-                        echo "[4/6] Waiting for SQL Server..."
-                        for i in $(seq 1 30); do
-                            if docker exec pms-sqlserver /opt/mssql-tools18/bin/sqlcmd -S localhost -U sa -P "YourStrong@Passw0rd" -C -Q "SELECT 1" 2>/dev/null; then
-                                echo "SQL Server is ready!"
-                                break
-                            fi
-                            echo "Waiting for SQL Server... ($i/30)"
-                            sleep 2
-                        done
-
-                        # Note: Database creation and migrations are handled by the backend services on startup
-
-                        # Step 5: Start all services
-                        echo "[5/6] Starting backend and frontend services..."
-                        docker compose -f docker-compose.ci.yml up -d
-
-                        # Wait for backend services to be healthy
-                        echo "Waiting for backend services to be ready..."
-                        for i in $(seq 1 60); do
-                            BOOKING_OK=$(docker exec pms-admin-frontend wget -q --spider http://pms-booking-service:8080/api/booking 2>&1 && echo "1" || echo "0")
-                            INVOICE_OK=$(docker exec pms-admin-frontend wget -q --spider http://pms-invoice-service:8080/api/invoice 2>&1 && echo "1" || echo "0")
-                            SITE_OK=$(docker exec pms-admin-frontend wget -q --spider http://pms-site-service:8080/api/site 2>&1 && echo "1" || echo "0")
-
-                            if [ "$BOOKING_OK" = "1" ] && [ "$INVOICE_OK" = "1" ] && [ "$SITE_OK" = "1" ]; then
-                                echo "All backend services are ready!"
-                                break
-                            fi
-                            echo "Waiting for services... ($i/60)"
-                            sleep 5
-                        done
-
-                        # Step 6: Start Kafka UI
-                        echo "[6/6] Starting Kafka UI..."
-                        docker rm -f kafka-ui 2>/dev/null || true
-                        docker run -d --name kafka-ui \
-                          --network testing_pms-network \
-                          -p 8085:8080 \
-                          -e KAFKA_CLUSTERS_0_NAME=pms-kafka \
-                          -e KAFKA_CLUSTERS_0_BOOTSTRAPSERVERS=kafka:9092 \
-                          provectuslabs/kafka-ui:latest || true
-
-                        echo ""
-                        echo "==========================================="
-                        echo "  DEPLOYMENT COMPLETE - Services Running!"
-                        echo "==========================================="
-                        echo ""
-                        echo "Access URLs:"
-                        echo "  Admin Frontend:  http://localhost:4200"
-                        echo "  Parker Frontend: http://localhost:4201"
-                        echo "  Kafka UI:        http://localhost:8085"
-                        echo ""
-                        echo "API Endpoints:"
-                        echo "  Booking API:     http://localhost:5001/api/booking"
-                        echo "  Invoice API:     http://localhost:5002/api/invoice"
-                        echo "  Site API:        http://localhost:5003/api/site"
-                        echo ""
-                        echo "To stop services, run the 'pms-stop' job or:"
-                        echo "  docker compose -f docker-compose.ci.yml down"
-                        echo "  docker rm -f kafka-ui"
-                        echo ""
+                        echo "=========================================="
+                        echo "  Deploying to Docker Swarm"
+                        echo "=========================================="
+                        docker stack deploy -c docker-stack.yml ${STACK_NAME}
+                        sleep 30
                     '''
                 }
             }
         }
 
-        stage('Verify Deployment') {
+        stage('Wait for Infrastructure') {
             steps {
                 sh '''
-                    echo "Running containers:"
-                    docker ps --format "table {{.Names}}\t{{.Status}}\t{{.Ports}}" | grep -E "pms|kafka"
+                    echo "Waiting for Zookeeper..."
+                    for i in $(seq 1 30); do
+                        ZK=$(docker ps --filter "name=${STACK_NAME}_zookeeper" -q | head -1)
+                        if [ -n "$ZK" ] && docker exec $ZK nc -z localhost 2181 2>/dev/null; then
+                            echo "Zookeeper ready!"
+                            break
+                        fi
+                        sleep 3
+                    done
+
+                    echo "Waiting for Kafka..."
+                    for i in $(seq 1 60); do
+                        KAFKA=$(docker ps --filter "name=${STACK_NAME}_kafka" -q | head -1)
+                        if [ -n "$KAFKA" ] && docker exec $KAFKA kafka-topics --list --bootstrap-server localhost:9092 2>/dev/null; then
+                            echo "Kafka ready!"
+                            break
+                        fi
+                        sleep 5
+                    done
+
+                    echo "Waiting for SQL Server..."
+                    for i in $(seq 1 60); do
+                        SQL=$(docker ps --filter "name=${STACK_NAME}_sqlserver" -q | head -1)
+                        if [ -n "$SQL" ] && docker exec $SQL /opt/mssql-tools18/bin/sqlcmd -S localhost -U sa -P "YourStrong@Passw0rd" -C -Q "SELECT 1" 2>/dev/null; then
+                            echo "SQL Server ready!"
+                            break
+                        fi
+                        sleep 5
+                    done
+                '''
+            }
+        }
+
+        stage('Create Kafka Topics') {
+            steps {
+                sh '''
+                    KAFKA=$(docker ps --filter "name=${STACK_NAME}_kafka" -q | head -1)
+                    docker exec $KAFKA kafka-topics --create --topic site-created --partitions 3 --replication-factor 1 --bootstrap-server localhost:9092 --if-not-exists || true
+                    docker exec $KAFKA kafka-topics --create --topic booking-created --partitions 3 --replication-factor 1 --bootstrap-server localhost:9092 --if-not-exists || true
+                    docker exec $KAFKA kafka-topics --create --topic ticket-created --partitions 3 --replication-factor 1 --bootstrap-server localhost:9092 --if-not-exists || true
+                    docker exec $KAFKA kafka-topics --create --topic invoice-created --partitions 3 --replication-factor 1 --bootstrap-server localhost:9092 --if-not-exists || true
+                    echo "Topics created!"
+                    sleep 10
+                '''
+            }
+        }
+
+        stage('Restart Backend Services') {
+            steps {
+                sh '''
+                    echo "Restarting backend services..."
+                    docker service scale ${STACK_NAME}_booking-service=0 ${STACK_NAME}_invoice-service=0 ${STACK_NAME}_site-service=0 || true
+                    sleep 10
+                    docker service scale ${STACK_NAME}_booking-service=1 ${STACK_NAME}_invoice-service=1 ${STACK_NAME}_site-service=1
+                    sleep 30
+                '''
+            }
+        }
+
+        stage('Health Check') {
+            steps {
+                sh '''
+                    echo "=========================================="
+                    echo "  Health Check"
+                    echo "=========================================="
+                    for i in $(seq 1 20); do
+                        BOOKING=$(curl -s -o /dev/null -w "%{http_code}" http://localhost:5001/api/booking 2>/dev/null || echo "000")
+                        INVOICE=$(curl -s -o /dev/null -w "%{http_code}" http://localhost:5002/api/invoice 2>/dev/null || echo "000")
+                        SITE=$(curl -s -o /dev/null -w "%{http_code}" http://localhost:5003/api/site 2>/dev/null || echo "000")
+
+                        echo "Booking: $BOOKING | Invoice: $INVOICE | Site: $SITE"
+
+                        if [ "$BOOKING" = "200" ] && [ "$INVOICE" = "200" ] && [ "$SITE" = "200" ]; then
+                            echo "All services healthy!"
+                            break
+                        fi
+                        sleep 10
+                    done
+
+                    echo ""
+                    docker stack services ${STACK_NAME}
                 '''
             }
         }
     }
 
-    // NO cleanup in post - services stay running!
     post {
-        failure {
-            sh '''
-                echo "=== Docker Logs ==="
-                docker logs pms-sqlserver 2>&1 | tail -50 || true
-                docker logs pms-kafka 2>&1 | tail -50 || true
+        success {
+            echo '''
+=========================================
+  DEPLOYMENT SUCCESSFUL!
+=========================================
+
+Frontend:
+  - Admin:  http://localhost:4200
+  - Parker: http://localhost:4201
+
+APIs:
+  - Booking: http://localhost:5001/api/booking
+  - Invoice: http://localhost:5002/api/invoice
+  - Site:    http://localhost:5003/api/site
+
+Monitoring:
+  - Kibana:     http://localhost:5601
+  - Kafka UI:   http://localhost:8085
+  - Visualizer: http://localhost:9080
             '''
+        }
+        failure {
+            sh 'docker stack services ${STACK_NAME} || true'
         }
     }
 }

@@ -1,0 +1,76 @@
+// Frontend Applications Build Pipeline
+// Builds and pushes frontend Docker images to Docker Hub
+
+pipeline {
+    agent any
+
+    environment {
+        DOCKER_HUB_USER = 'salmawaleedd'
+        DOCKER_HUB_CREDENTIALS = credentials('dockerhub-credentials')  // Configure in Jenkins
+    }
+
+    stages {
+        stage('Checkout') {
+            steps {
+                checkout scm
+            }
+        }
+
+        stage('Build Frontend Images') {
+            parallel {
+                stage('Build Admin Frontend') {
+                    steps {
+                        dir('frontend/admin-frontend') {
+                            sh '''
+                                echo "Building Admin Frontend (Angular)..."
+                                docker build -t ${DOCKER_HUB_USER}/pms-admin-frontend:latest .
+                                docker tag ${DOCKER_HUB_USER}/pms-admin-frontend:latest ${DOCKER_HUB_USER}/pms-admin-frontend:${BUILD_NUMBER}
+                            '''
+                        }
+                    }
+                }
+                stage('Build Parker Frontend') {
+                    steps {
+                        dir('frontend/parker-frontend') {
+                            sh '''
+                                echo "Building Parker Frontend (React)..."
+                                docker build -t ${DOCKER_HUB_USER}/pms-parker-frontend:latest .
+                                docker tag ${DOCKER_HUB_USER}/pms-parker-frontend:latest ${DOCKER_HUB_USER}/pms-parker-frontend:${BUILD_NUMBER}
+                            '''
+                        }
+                    }
+                }
+            }
+        }
+
+        stage('Push to Docker Hub') {
+            steps {
+                sh '''
+                    echo "Logging in to Docker Hub..."
+                    echo $DOCKER_HUB_CREDENTIALS_PSW | docker login -u $DOCKER_HUB_CREDENTIALS_USR --password-stdin
+
+                    echo "Pushing Admin Frontend..."
+                    docker push ${DOCKER_HUB_USER}/pms-admin-frontend:latest
+                    docker push ${DOCKER_HUB_USER}/pms-admin-frontend:${BUILD_NUMBER}
+
+                    echo "Pushing Parker Frontend..."
+                    docker push ${DOCKER_HUB_USER}/pms-parker-frontend:latest
+                    docker push ${DOCKER_HUB_USER}/pms-parker-frontend:${BUILD_NUMBER}
+                '''
+            }
+        }
+    }
+
+    post {
+        success {
+            echo "Frontend images built and pushed successfully!"
+            echo "Images tagged with: latest and ${BUILD_NUMBER}"
+        }
+        failure {
+            echo "Frontend build failed!"
+        }
+        always {
+            sh 'docker logout || true'
+        }
+    }
+}

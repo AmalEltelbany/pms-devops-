@@ -1,28 +1,123 @@
-// Docker Swarm Deployment Pipeline
-// Deploys the PMS stack to a Docker Swarm cluster
+// Full CI/CD Pipeline for PMS
+// Builds backend services from private repo, pulls frontend from Docker Hub, deploys to Swarm
 
 pipeline {
     agent any
 
     environment {
         STACK_NAME = 'pms'
+        DOCKER_HUB_BACKEND = 'amaleltelabany'
+        DOCKER_HUB_FRONTEND = 'salmawaleedd'
+        BACKEND_REPO = 'https://github.com/GS-PMS/pms-backend.git'
     }
 
     stages {
-        stage('Prepare') {
+        // =============================================
+        // STAGE 1: Build Backend Services
+        // =============================================
+        stage('Checkout Backend Repo') {
             steps {
-                dir('testing') {
+                // Clone the private backend repository
+                git branch: 'main',
+                    credentialsId: 'github-credentials',
+                    url: "${BACKEND_REPO}"
+            }
+        }
+
+        stage('Show Project Structure') {
+            steps {
+                sh '''
+                    echo "=========================================="
+                    echo "  Project Structure"
+                    echo "=========================================="
+                    ls -la
+                    echo ""
+                    echo "Looking for Dockerfiles..."
+                    find . -name "Dockerfile" -type f 2>/dev/null || echo "No Dockerfiles found"
+                '''
+            }
+        }
+
+        stage('Build Backend Images') {
+            parallel {
+                stage('Build Booking Service') {
+                    steps {
+                        sh '''
+                            echo "Building Booking Service..."
+                            docker build -f Booking.API/Dockerfile -t ${DOCKER_HUB_BACKEND}/pms-booking-service:${BUILD_NUMBER} .
+                            docker tag ${DOCKER_HUB_BACKEND}/pms-booking-service:${BUILD_NUMBER} ${DOCKER_HUB_BACKEND}/pms-booking-service:latest
+                        '''
+                    }
+                }
+                stage('Build Invoice Service') {
+                    steps {
+                        sh '''
+                            echo "Building Invoice Service..."
+                            docker build -f Invoice.API/Dockerfile -t ${DOCKER_HUB_BACKEND}/pms-invoice-service:${BUILD_NUMBER} .
+                            docker tag ${DOCKER_HUB_BACKEND}/pms-invoice-service:${BUILD_NUMBER} ${DOCKER_HUB_BACKEND}/pms-invoice-service:latest
+                        '''
+                    }
+                }
+                stage('Build Site Service') {
+                    steps {
+                        sh '''
+                            echo "Building Site Service..."
+                            docker build -f Site.API/Dockerfile -t ${DOCKER_HUB_BACKEND}/pms-site-service:${BUILD_NUMBER} .
+                            docker tag ${DOCKER_HUB_BACKEND}/pms-site-service:${BUILD_NUMBER} ${DOCKER_HUB_BACKEND}/pms-site-service:latest
+                        '''
+                    }
+                }
+            }
+        }
+
+        stage('Push Backend to Docker Hub') {
+            steps {
+                withCredentials([usernamePassword(credentialsId: 'dockerhub-credentials', usernameVariable: 'DOCKER_USER', passwordVariable: 'DOCKER_PASS')]) {
                     sh '''
-                        echo "==========================================="
-                        echo "  PMS - Docker Swarm Deployment"
-                        echo "==========================================="
-                        echo ""
-                        echo "Stack Name: ${STACK_NAME}"
+                        echo "Logging in to Docker Hub..."
+                        echo $DOCKER_PASS | docker login -u $DOCKER_USER --password-stdin
+
+                        echo "Pushing Booking Service..."
+                        docker push ${DOCKER_HUB_BACKEND}/pms-booking-service:latest
+                        docker push ${DOCKER_HUB_BACKEND}/pms-booking-service:${BUILD_NUMBER}
+
+                        echo "Pushing Invoice Service..."
+                        docker push ${DOCKER_HUB_BACKEND}/pms-invoice-service:latest
+                        docker push ${DOCKER_HUB_BACKEND}/pms-invoice-service:${BUILD_NUMBER}
+
+                        echo "Pushing Site Service..."
+                        docker push ${DOCKER_HUB_BACKEND}/pms-site-service:latest
+                        docker push ${DOCKER_HUB_BACKEND}/pms-site-service:${BUILD_NUMBER}
                     '''
                 }
             }
         }
 
+        // =============================================
+        // STAGE 2: Pull Frontend Images from Docker Hub
+        // =============================================
+        stage('Pull Frontend Images') {
+            steps {
+                sh '''
+                    echo "=========================================="
+                    echo "  Pulling Frontend Images from Docker Hub"
+                    echo "=========================================="
+
+                    echo "Pulling Admin Frontend..."
+                    docker pull ${DOCKER_HUB_FRONTEND}/pms-admin-frontend:latest
+
+                    echo "Pulling Parker Frontend..."
+                    docker pull ${DOCKER_HUB_FRONTEND}/pms-parker-frontend:latest
+
+                    echo ""
+                    echo "Frontend images pulled successfully!"
+                '''
+            }
+        }
+
+        // =============================================
+        // STAGE 3: Deploy to Docker Swarm
+        // =============================================
         stage('Clean Previous Stack') {
             steps {
                 sh '''
@@ -133,7 +228,7 @@ pipeline {
             }
         }
 
-        stage('Force Restart Backend Services') {
+        stage('Restart Backend Services') {
             steps {
                 sh '''
                     echo "=========================================="
@@ -181,10 +276,6 @@ pipeline {
                     echo "Waiting for backend services to initialize..."
                     sleep 30
 
-                    echo "Checking backend service replicas..."
-                    docker stack services ${STACK_NAME} | grep -E "(booking|invoice|site)-service"
-
-                    echo ""
                     echo "Testing API endpoints..."
                     for i in $(seq 1 20); do
                         BOOKING_OK=$(curl -s -o /dev/null -w "%{http_code}" http://localhost:5001/api/booking 2>/dev/null || echo "000")
@@ -205,17 +296,6 @@ pipeline {
                     echo ""
                     echo "=== Final Service Status ==="
                     docker stack services ${STACK_NAME}
-
-                    echo ""
-                    echo "=== Backend Service Logs ==="
-                    echo "--- Booking Service ---"
-                    docker service logs ${STACK_NAME}_booking-service --tail 20 2>/dev/null || echo "No logs"
-                    echo ""
-                    echo "--- Invoice Service ---"
-                    docker service logs ${STACK_NAME}_invoice-service --tail 20 2>/dev/null || echo "No logs"
-                    echo ""
-                    echo "--- Site Service ---"
-                    docker service logs ${STACK_NAME}_site-service --tail 20 2>/dev/null || echo "No logs"
                 '''
             }
         }
@@ -252,6 +332,9 @@ pipeline {
                 docker stack services ${STACK_NAME} || true
                 docker stack ps ${STACK_NAME} --no-trunc || true
             '''
+        }
+        always {
+            sh 'docker logout || true'
         }
     }
 }
