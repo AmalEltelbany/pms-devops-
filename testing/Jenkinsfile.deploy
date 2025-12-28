@@ -83,12 +83,11 @@ pipeline {
 
                     echo "Waiting for Kafka..."
                     for i in $(seq 1 60); do
-                        KAFKA=$(docker ps --filter "name=${STACK_NAME}_kafka" -q | head -1)
+                        # Filter for cp-kafka image (not kafka-ui)
+                        KAFKA=$(docker ps --filter "name=${STACK_NAME}_kafka" --format "{{.ID}}\t{{.Image}}" | grep "cp-kafka" | cut -f1 | head -1)
                         if [ -n "$KAFKA" ]; then
-                            # Try nc first, then try kafka-topics
-                            if docker exec $KAFKA nc -z localhost 9092 2>/dev/null || docker exec $KAFKA bash -c "echo > /dev/tcp/localhost/9092" 2>/dev/null; then
-                                echo "Kafka port is open, waiting a bit more for broker to initialize..."
-                                sleep 10
+                            # Use kafka-topics to verify broker is ready
+                            if docker exec $KAFKA kafka-topics --list --bootstrap-server localhost:9092 2>/dev/null; then
                                 echo "Kafka ready!"
                                 break
                             fi
