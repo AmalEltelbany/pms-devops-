@@ -159,13 +159,23 @@ pipeline {
                     done
 
                     echo ""
-                    echo "Backend service logs (last 10 lines each):"
+                    echo "=== Service Task Status (showing failures) ==="
+                    docker stack ps ${STACK_NAME} --no-trunc --filter "desired-state=running" | head -20
+
+                    echo ""
+                    echo "=== Failed Tasks ==="
+                    docker stack ps ${STACK_NAME} --no-trunc --filter "desired-state=shutdown" | head -20
+
+                    echo ""
+                    echo "Backend service logs (last 50 lines each):"
                     echo "=== Booking Service ==="
-                    docker service logs ${STACK_NAME}_booking-service --tail 10 2>/dev/null || echo "No logs available"
+                    docker service logs ${STACK_NAME}_booking-service --tail 50 2>/dev/null || echo "No logs available"
+                    echo ""
                     echo "=== Invoice Service ==="
-                    docker service logs ${STACK_NAME}_invoice-service --tail 10 2>/dev/null || echo "No logs available"
+                    docker service logs ${STACK_NAME}_invoice-service --tail 50 2>/dev/null || echo "No logs available"
+                    echo ""
                     echo "=== Site Service ==="
-                    docker service logs ${STACK_NAME}_site-service --tail 10 2>/dev/null || echo "No logs available"
+                    docker service logs ${STACK_NAME}_site-service --tail 50 2>/dev/null || echo "No logs available"
                 '''
             }
         }

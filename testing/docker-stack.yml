@@ -103,13 +103,18 @@ services:
       Kafka__BootstrapServers: kafka:9092
       Kafka__ClientId: BookingService
       Kafka__Consumer__GroupId: BookingServiceGroup
-      ConnectionStrings__DefaultConnection: "Server=sqlserver;Database=PMS_Booking;User Id=sa;Password=YourStrong@Passw0rd;TrustServerCertificate=True;MultipleActiveResultSets=True;"
+      Kafka__Consumer__EnableAutoCommit: "true"
+      Kafka__Consumer__AutoOffsetReset: Earliest
+      ConnectionStrings__DefaultConnection: "Server=sqlserver;Database=PMS_Booking;User Id=sa;Password=YourStrong@Passw0rd;TrustServerCertificate=True;MultipleActiveResultSets=True;Connection Timeout=60;"
     networks:
       - pms-network
     deploy:
       replicas: 2
       restart_policy:
         condition: on-failure
+        delay: 30s
+        max_attempts: 10
+        window: 120s
       update_config:
         parallelism: 1
         delay: 10s
@@ -124,13 +129,18 @@ services:
       Kafka__BootstrapServers: kafka:9092
       Kafka__ClientId: InvoiceService
       Kafka__Consumer__GroupId: InvoiceServiceGroup
-      ConnectionStrings__DefaultConnection: "Server=sqlserver;Database=PMS_Invoice;User Id=sa;Password=YourStrong@Passw0rd;TrustServerCertificate=True;MultipleActiveResultSets=True;"
+      Kafka__Consumer__EnableAutoCommit: "true"
+      Kafka__Consumer__AutoOffsetReset: Earliest
+      ConnectionStrings__DefaultConnection: "Server=sqlserver;Database=PMS_Invoice;User Id=sa;Password=YourStrong@Passw0rd;TrustServerCertificate=True;MultipleActiveResultSets=True;Connection Timeout=60;"
     networks:
       - pms-network
     deploy:
       replicas: 2
       restart_policy:
         condition: on-failure
+        delay: 30s
+        max_attempts: 10
+        window: 120s
       update_config:
         parallelism: 1
         delay: 10s
@@ -145,13 +155,18 @@ services:
       Kafka__BootstrapServers: kafka:9092
       Kafka__ClientId: SiteService
       Kafka__Consumer__GroupId: SiteServiceGroup
-      ConnectionStrings__DefaultConnection: "Server=sqlserver;Database=PMS_Site;User Id=sa;Password=YourStrong@Passw0rd;TrustServerCertificate=True;MultipleActiveResultSets=True;"
+      Kafka__Consumer__EnableAutoCommit: "true"
+      Kafka__Consumer__AutoOffsetReset: Earliest
+      ConnectionStrings__DefaultConnection: "Server=sqlserver;Database=PMS_Site;User Id=sa;Password=YourStrong@Passw0rd;TrustServerCertificate=True;MultipleActiveResultSets=True;Connection Timeout=60;"
     networks:
       - pms-network
     deploy:
       replicas: 2
       restart_policy:
         condition: on-failure
+        delay: 30s
+        max_attempts: 10
+        window: 120s
       update_config:
         parallelism: 1
         delay: 10s
