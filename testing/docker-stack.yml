@@ -93,6 +93,7 @@ services:
 
   # Backend Microservices
 
+  # Backend services start with 0 replicas - scaled up by pipeline after infrastructure is ready
   booking-service:
     image: amaleltelabany/pms-booking-service:latest
     ports:
@@ -111,7 +112,7 @@ services:
     networks:
       - pms-network
     deploy:
-      replicas: 1
+      replicas: 0
       restart_policy:
         condition: on-failure
         delay: 30s
@@ -139,7 +140,7 @@ services:
     networks:
       - pms-network
     deploy:
-      replicas: 1
+      replicas: 0
       restart_policy:
         condition: on-failure
         delay: 30s
@@ -167,7 +168,7 @@ services:
     networks:
       - pms-network
     deploy:
-      replicas: 1
+      replicas: 0
       restart_policy:
         condition: on-failure
         delay: 30s

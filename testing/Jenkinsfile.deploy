@@ -119,14 +119,13 @@ pipeline {
             }
         }
 
-        stage('Restart Backend Services') {
+        stage('Start Backend Services') {
             steps {
                 sh '''
-                    echo "Restarting backend services..."
-                    docker service scale ${STACK_NAME}_booking-service=0 ${STACK_NAME}_invoice-service=0 ${STACK_NAME}_site-service=0 || true
-                    sleep 10
-                    docker service scale ${STACK_NAME}_booking-service=1 ${STACK_NAME}_invoice-service=1 ${STACK_NAME}_site-service=1
-                    sleep 30
+                    echo "Starting backend services (infrastructure is ready)..."
+                    docker service scale ${STACK_NAME}_booking-service=1 ${STACK_NAME}_invoice-service=1 ${STACK_NAME}_site-service=1 --detach
+                    echo "Services starting, waiting for them to initialize..."
+                    sleep 60
                 '''
             }
         }
@@ -181,7 +180,21 @@ Monitoring:
             '''
         }
         failure {
-            sh 'docker stack services ${STACK_NAME} || true'
+            sh '''
+                echo "=== Stack Services Status ==="
+                docker stack services ${STACK_NAME} || true
+                echo ""
+                echo "=== Failed Tasks ==="
+                docker stack ps ${STACK_NAME} --no-trunc | grep -E "Failed|Rejected|Shutdown" || true
+                echo ""
+                echo "=== Backend Service Logs ==="
+                BOOKING=$(docker ps -a --filter "name=${STACK_NAME}_booking" -q | head -1)
+                INVOICE=$(docker ps -a --filter "name=${STACK_NAME}_invoice" -q | head -1)
+                SITE=$(docker ps -a --filter "name=${STACK_NAME}_site" -q | head -1)
+                [ -n "$BOOKING" ] && echo "--- Booking Service ---" && docker logs $BOOKING --tail 50 2>&1 || true
+                [ -n "$INVOICE" ] && echo "--- Invoice Service ---" && docker logs $INVOICE --tail 50 2>&1 || true
+                [ -n "$SITE" ] && echo "--- Site Service ---" && docker logs $SITE --tail 50 2>&1 || true
+            '''
         }
     }
 }
