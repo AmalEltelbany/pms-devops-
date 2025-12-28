@@ -212,10 +212,10 @@ pipeline {
                     KAFKA_CONTAINER=$(docker ps --filter "name=${STACK_NAME}_kafka" --format "{{.ID}}" | head -1)
 
                     echo "Creating topics..."
-                    docker exec $KAFKA_CONTAINER kafka-topics --create --topic site-created --partitions 3 --replication-factor 1 --bootstrap-server localhost:9092 --if-not-exists || echo "topic may exist"
-                    docker exec $KAFKA_CONTAINER kafka-topics --create --topic booking-created --partitions 3 --replication-factor 1 --bootstrap-server localhost:9092 --if-not-exists || echo "topic may exist"
-                    docker exec $KAFKA_CONTAINER kafka-topics --create --topic ticket-created --partitions 3 --replication-factor 1 --bootstrap-server localhost:9092 --if-not-exists || echo "topic may exist"
-                    docker exec $KAFKA_CONTAINER kafka-topics --create --topic invoice-created --partitions 3 --replication-factor 1 --bootstrap-server localhost:9092 --if-not-exists || echo "topic may exist"
+                    docker exec $KAFKA_CONTAINER kafka-topics --create --topic site-created --partitions 3 --replication-factor 1 --bootstrap-server localhost:9092 --if-not-exists || true
+                    docker exec $KAFKA_CONTAINER kafka-topics --create --topic booking-created --partitions 3 --replication-factor 1 --bootstrap-server localhost:9092 --if-not-exists || true
+                    docker exec $KAFKA_CONTAINER kafka-topics --create --topic ticket-created --partitions 3 --replication-factor 1 --bootstrap-server localhost:9092 --if-not-exists || true
+                    docker exec $KAFKA_CONTAINER kafka-topics --create --topic invoice-created --partitions 3 --replication-factor 1 --bootstrap-server localhost:9092 --if-not-exists || true
 
                     echo ""
                     echo "Topics created. Listing all topics:"
