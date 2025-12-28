@@ -1,6 +1,6 @@
 // PMS Deployment Pipeline with Automated Testing
-// Deploys to Docker Swarm then runs Selenium + API tests
-// Requires: github-credentials for private PMS-Testing repo
+// Deploys to Docker Swarm then triggers PMS-Testing pipeline
+// Requires: A separate Jenkins job 'pms-testing' pointing to PMS-Testing repo
 
 pipeline {
     agent any
@@ -9,31 +9,18 @@ pipeline {
         STACK_NAME = 'pms'
         DOCKER_HUB_BACKEND = 'amaleltelabany'
         DOCKER_HUB_FRONTEND = 'salmawaleedd'
-        TESTING_REPO = 'https://github.com/GS-PMS/PMS-Testing.git'
-
-        // Application URLs for tests
-        ADMIN_URL = 'http://localhost:4200'
-        PARKER_URL = 'http://localhost:4201'
-        BOOKING_API = 'http://localhost:5001'
-        INVOICE_API = 'http://localhost:5002'
-        SITE_API = 'http://localhost:5003'
     }
 
     parameters {
         booleanParam(
             name: 'RUN_TESTS',
             defaultValue: true,
-            description: 'Run automated tests after deployment'
+            description: 'Trigger automated tests after deployment'
         )
         booleanParam(
-            name: 'HEADLESS',
+            name: 'WAIT_FOR_TESTS',
             defaultValue: true,
-            description: 'Run browser tests in headless mode'
-        )
-        choice(
-            name: 'TEST_SUITE',
-            choices: ['all', 'api', 'ui'],
-            description: 'Which test suite to run'
+            description: 'Wait for test results before completing'
         )
     }
 
@@ -204,160 +191,47 @@ pipeline {
         }
 
         // ==========================================
-        // TESTING STAGES
+        // TRIGGER TESTING PIPELINE
         // ==========================================
 
-        stage('Clone Test Repository') {
+        stage('Trigger Testing Pipeline') {
             when {
                 expression { params.RUN_TESTS == true }
             }
             steps {
-                sh 'rm -rf pms-testing'
-
-                // Clone private repo using GitHub credentials
-                withCredentials([usernamePassword(
-                    credentialsId: 'github-credentials',
-                    usernameVariable: 'GIT_USER',
-                    passwordVariable: 'GIT_TOKEN'
-                )]) {
-                    sh '''
-                        echo "=========================================="
-                        echo "  Cloning PMS-Testing Repository (Private)"
-                        echo "=========================================="
-
-                        git clone https://${GIT_USER}:${GIT_TOKEN}@github.com/GS-PMS/PMS-Testing.git pms-testing
-
-                        cd pms-testing
-                        echo "Test repository cloned"
-                        ls -la
-                    '''
-                }
-            }
-        }
-
-        stage('Setup Test Environment') {
-            when {
-                expression { params.RUN_TESTS == true }
-            }
-            steps {
-                sh '''
-                    echo "=========================================="
-                    echo "  Setting Up Test Environment"
-                    echo "=========================================="
-
-                    # Setup Firefox driver
-                    mkdir -p ${WORKSPACE}/drivers
-
-                    # Check if geckodriver already exists
-                    if [ ! -f "${WORKSPACE}/drivers/geckodriver" ]; then
-                        echo "Downloading GeckoDriver..."
-                        wget -q -O /tmp/geckodriver.tar.gz https://github.com/mozilla/geckodriver/releases/download/v0.34.0/geckodriver-v0.34.0-linux64.tar.gz
-                        tar -xzf /tmp/geckodriver.tar.gz -C ${WORKSPACE}/drivers/
-                        chmod +x ${WORKSPACE}/drivers/geckodriver
-                        rm -f /tmp/geckodriver.tar.gz
-                    fi
-
-                    echo "GeckoDriver ready"
-                    ${WORKSPACE}/drivers/geckodriver --version || true
-
-                    # Make bundled Allure executable
-                    if [ -d "pms-testing/.allure" ]; then
-                        chmod +x pms-testing/.allure/allure-*/bin/allure 2>/dev/null || true
-                    fi
-                '''
-            }
-        }
-
-        stage('Run Tests') {
-            when {
-                expression { params.RUN_TESTS == true }
-            }
-            steps {
-                dir('pms-testing') {
-                    sh '''
-                        echo "=========================================="
-                        echo "  Running PMS Automated Tests"
-                        echo "=========================================="
-
-                        export PATH="${WORKSPACE}/drivers:$PATH"
-                        export HEADLESS=${HEADLESS}
-                        export ADMIN_URL=${ADMIN_URL}
-                        export PARKER_URL=${PARKER_URL}
-                        export BOOKING_API=${BOOKING_API}
-                        export INVOICE_API=${INVOICE_API}
-                        export SITE_API=${SITE_API}
-
-                        echo "Test Configuration:"
-                        echo "  - Browser: Firefox"
-                        echo "  - Headless: ${HEADLESS}"
-                        echo "  - Test Suite: ${TEST_SUITE}"
-                        echo ""
-
-                        # Run Maven tests
-                        mvn clean test -Dbrowser=firefox -Dheadless=${HEADLESS} || true
-
-                        echo ""
-                        echo "Test execution completed"
-                    '''
-                }
-            }
-        }
-
-        stage('Generate Allure Report') {
-            when {
-                expression { params.RUN_TESTS == true }
-            }
-            steps {
-                dir('pms-testing') {
-                    sh '''
-                        echo "=========================================="
-                        echo "  Generating Allure Report"
-                        echo "=========================================="
-
-                        if [ -d "target/allure-results" ]; then
-                            echo "Allure results found:"
-                            ls -la target/allure-results/ | head -10
-
-                            # Generate report using bundled Allure
-                            if [ -f ".allure/allure-2.31.0/bin/allure" ]; then
-                                .allure/allure-2.31.0/bin/allure generate target/allure-results -o target/allure-report --clean
-                                echo "Report generated at target/allure-report"
-                            fi
-                        else
-                            echo "No Allure results found"
-                            mkdir -p target/allure-results
-                        fi
-                    '''
-                }
-
-                // Publish Allure report via Jenkins plugin (requires Allure Jenkins Plugin)
                 script {
-                    try {
-                        allure([
-                            includeProperties: false,
-                            jdk: '',
-                            results: [[path: 'pms-testing/target/allure-results']],
-                            report: 'allure-report'
-                        ])
-                    } catch (Exception e) {
-                        echo "Allure plugin not installed. Report available in artifacts."
+                    echo "=========================================="
+                    echo "  Triggering PMS Testing Pipeline"
+                    echo "=========================================="
+
+                    // Trigger the pms-testing job (uses its own Jenkinsfile)
+                    def testJob = build job: 'pms-testing',
+                        parameters: [
+                            booleanParam(name: 'HEADLESS', value: true),
+                            booleanParam(name: 'PARALLEL_EXECUTION', value: true),
+                            string(name: 'MAVEN_GOALS', value: 'clean test')
+                        ],
+                        wait: params.WAIT_FOR_TESTS,
+                        propagate: false  // Don't fail deploy if tests fail
+
+                    if (params.WAIT_FOR_TESTS) {
+                        echo "Testing Pipeline Result: ${testJob.result}"
+
+                        if (testJob.result == 'SUCCESS') {
+                            echo "All tests passed!"
+                        } else if (testJob.result == 'UNSTABLE') {
+                            echo "Some tests failed - check Allure report"
+                            currentBuild.result = 'UNSTABLE'
+                        } else {
+                            echo "Testing pipeline failed"
+                            // Don't fail the deployment, just warn
+                        }
+
+                        echo "View test results: ${testJob.absoluteUrl}allure/"
+                    } else {
+                        echo "Testing pipeline triggered (not waiting for results)"
                     }
                 }
-            }
-        }
-
-        stage('Archive Test Artifacts') {
-            when {
-                expression { params.RUN_TESTS == true }
-            }
-            steps {
-                archiveArtifacts artifacts: '''
-                    pms-testing/target/allure-results/**,
-                    pms-testing/target/allure-report/**,
-                    pms-testing/target/surefire-reports/**,
-                    pms-testing/**/*.png,
-                    pms-testing/**/*.log
-                ''', allowEmptyArchive: true
             }
         }
     }
@@ -365,10 +239,10 @@ pipeline {
     post {
         success {
             script {
-                def testMsg = params.RUN_TESTS ? "\n\nTest Results: Check Allure Report in Jenkins" : ""
+                def testMsg = params.RUN_TESTS ? "\n\nTest Pipeline: Check 'pms-testing' job for results" : ""
                 echo """
 =========================================
-  DEPLOYMENT & TESTING SUCCESSFUL!
+  DEPLOYMENT SUCCESSFUL!
 =========================================
 
 Frontend:
@@ -396,9 +270,6 @@ ${testMsg}
                 echo "=== Failed Tasks ==="
                 docker stack ps ${STACK_NAME} --no-trunc | grep -E "Failed|Rejected|Shutdown" || true
             '''
-        }
-        always {
-            sh 'rm -rf /tmp/geckodriver* || true'
         }
     }
 }

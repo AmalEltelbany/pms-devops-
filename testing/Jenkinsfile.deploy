@@ -1,6 +1,7 @@
 // PMS Deployment Pipeline
 // Triggered after backend build pipeline completes
 // Pulls images from Docker Hub and deploys to Docker Swarm
+// Works on any machine with Docker installed (auto-initializes Swarm)
 
 pipeline {
     agent any
@@ -12,6 +13,37 @@ pipeline {
     }
 
     stages {
+        stage('Initialize Docker Swarm') {
+            steps {
+                sh '''
+                    echo "=========================================="
+                    echo "  Checking Docker Swarm Status"
+                    echo "=========================================="
+
+                    # Check if Swarm is active
+                    SWARM_STATUS=$(docker info --format '{{.Swarm.LocalNodeState}}' 2>/dev/null || echo "inactive")
+
+                    if [ "$SWARM_STATUS" = "active" ]; then
+                        echo "Docker Swarm is already active"
+                        docker node ls
+                    else
+                        echo "Initializing Docker Swarm..."
+                        # Try to init, handle multiple network interfaces
+                        docker swarm init 2>/dev/null || docker swarm init --advertise-addr $(hostname -I | awk '{print $1}') 2>/dev/null || echo "Swarm init failed or already initialized"
+
+                        # Verify
+                        sleep 2
+                        if docker node ls 2>/dev/null; then
+                            echo "Docker Swarm initialized successfully!"
+                        else
+                            echo "ERROR: Could not initialize Docker Swarm"
+                            exit 1
+                        fi
+                    fi
+                '''
+            }
+        }
+
         stage('Pull All Images') {
             parallel {
                 stage('Pull Backend Images') {
@@ -142,25 +174,61 @@ pipeline {
         stage('Start Backend Services') {
             steps {
                 sh '''
-                    echo "Starting backend services (infrastructure is ready)..."
-                    docker service scale ${STACK_NAME}_booking-service=1 ${STACK_NAME}_invoice-service=1 ${STACK_NAME}_site-service=1 --detach
-                    echo "Services starting, waiting for them to initialize..."
-                    sleep 30
+                    echo "=========================================="
+                    echo "  Starting Backend Services (Sequential)"
+                    echo "=========================================="
+                    echo "Starting services one at a time to avoid DB migration conflicts..."
+
+                    # 1. Start Site Service first (other services depend on sites)
+                    echo ""
+                    echo ">>> Starting Site Service..."
+                    docker service scale ${STACK_NAME}_site-service=1
+                    echo "Waiting for Site Service to complete DB migration..."
+                    for i in $(seq 1 30); do
+                        SITE_STATUS=$(curl -s -o /dev/null -w "%{http_code}" http://localhost:5003/api/site 2>/dev/null || echo "000")
+                        if [ "$SITE_STATUS" = "200" ]; then
+                            echo "Site Service is ready!"
+                            break
+                        fi
+                        echo "Waiting for Site Service... ($i/30) - Status: $SITE_STATUS"
+                        sleep 10
+                    done
+
+                    # 2. Start Booking Service
+                    echo ""
+                    echo ">>> Starting Booking Service..."
+                    docker service scale ${STACK_NAME}_booking-service=1
+                    echo "Waiting for Booking Service to complete DB migration..."
+                    for i in $(seq 1 30); do
+                        BOOKING_STATUS=$(curl -s -o /dev/null -w "%{http_code}" http://localhost:5001/api/booking 2>/dev/null || echo "000")
+                        if [ "$BOOKING_STATUS" = "200" ]; then
+                            echo "Booking Service is ready!"
+                            break
+                        fi
+                        echo "Waiting for Booking Service... ($i/30) - Status: $BOOKING_STATUS"
+                        sleep 10
+                    done
+
+                    # 3. Start Invoice Service
+                    echo ""
+                    echo ">>> Starting Invoice Service..."
+                    docker service scale ${STACK_NAME}_invoice-service=1
+                    echo "Waiting for Invoice Service to complete DB migration..."
+                    for i in $(seq 1 30); do
+                        INVOICE_STATUS=$(curl -s -o /dev/null -w "%{http_code}" http://localhost:5002/api/invoice 2>/dev/null || echo "000")
+                        if [ "$INVOICE_STATUS" = "200" ]; then
+                            echo "Invoice Service is ready!"
+                            break
+                        fi
+                        echo "Waiting for Invoice Service... ($i/30) - Status: $INVOICE_STATUS"
+                        sleep 10
+                    done
 
                     echo ""
-                    echo "Service status after scale:"
-                    docker stack services ${STACK_NAME} | grep -E "booking|invoice|site"
+                    echo "All backend services started!"
                     echo ""
-
-                    echo "Waiting additional 30s for containers to start..."
-                    sleep 30
-
                     echo "Container status:"
                     docker ps -a --filter "name=${STACK_NAME}_booking" --filter "name=${STACK_NAME}_invoice" --filter "name=${STACK_NAME}_site" --format "table {{.Names}}\t{{.Status}}\t{{.Image}}"
-
-                    echo ""
-                    echo "Checking for failed tasks:"
-                    docker stack ps ${STACK_NAME} --no-trunc | grep -E "booking|invoice|site" | head -10
                 '''
             }
         }
